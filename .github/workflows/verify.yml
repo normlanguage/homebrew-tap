@@ -1,0 +1,32 @@
+name: Verify Formula
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@082c94ee19e776205cfa8e43802917d1425e2fe7
+        with:
+          stable: true
+      - name: Install and test Norm
+        run: |
+          brew install normlanguage/tap/normlang
+          brew test normlanguage/tap/normlang
+          norm --version
+      - name: Verify removal
+        run: |
+          brew uninstall normlang
+          test ! -e "$(brew --prefix)/bin/norm"
+          test ! -d "$(brew --cellar)/normlang"
