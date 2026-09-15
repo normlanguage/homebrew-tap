@@ -1,5 +1,11 @@
 # Norm Homebrew Tap
 
+With Homebrew 7 or later, trust this project-maintained tap first:
+
+```sh
+brew trust normlanguage/tap
+```
+
 Install the Norm command-line toolchain:
 
 ```sh
