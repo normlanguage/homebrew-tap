@@ -1,0 +1,81 @@
+name: Verify macOS upgrade
+
+on:
+  push:
+    branches: [codex/macos-tap-upgrade-validation]
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    runs-on: macos-15
+    env:
+      HOMEBREW_CACHE: ${{ runner.temp }}/norm-homebrew-cache
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_FROM_API: '1'
+      HOMEBREW_NO_ANALYTICS: '1'
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@082c94ee19e776205cfa8e43802917d1425e2fe7
+        with:
+          stable: true
+      - name: Install, upgrade, and remove the public Formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validation-evidence "$HOMEBREW_CACHE"
+          {
+            test "$(uname -m)" = arm64
+            brew --version
+            brew tap normlanguage/tap
+            tap_dir="$(brew --repository normlanguage/tap)"
+            case "$(git -C "$tap_dir" remote get-url origin)" in
+              https://github.com/normlanguage/homebrew-tap|https://github.com/normlanguage/homebrew-tap.git) ;;
+              *) exit 1 ;;
+            esac
+            project="$RUNNER_TEMP/norm-user-project"
+            mkdir -p "$project"
+            printf 'Void main() { printLine("Hello from Norm") }\n' > "$project/hello.norm"
+            project_hash="$(shasum -a 256 "$project/hello.norm" | awk '{print $1}')"
+
+            git -C "$tap_dir" checkout --detach ca88d61541a7084fbc2c3270e98122d6a1e06d84
+            test "$(git -C "$tap_dir" rev-parse HEAD)" = ca88d61541a7084fbc2c3270e98122d6a1e06d84
+            test "$(brew info --json=v2 normlanguage/tap/normlang | jq -r '.formulae[0].urls.stable.url')" = https://github.com/normlanguage/Norm/releases/download/v0.23.2/norm-v0.23.2-macos-arm64.tar.gz
+            test "$(brew info --json=v2 normlanguage/tap/normlang | jq -r '.formulae[0].versions.stable')" = 0.23.2
+            brew fetch --force --verbose normlanguage/tap/normlang
+            old_cache="$(brew --cache normlanguage/tap/normlang)"
+            test -f "$old_cache"
+            printf '%s  %s\n' 3ed2855bf1f606147691dc8df0fcc4c22fdfc127b992dbf0b063b97f5246fed1 "$old_cache" | shasum -a 256 -c -
+            brew install --verbose normlanguage/tap/normlang
+            test "$(norm --version)" = 'norm 0.23.2'
+            test "$(cd "$project" && norm run hello.norm)" = 'Hello from Norm'
+            brew test normlanguage/tap/normlang
+            test "$(basename "$(realpath "$(brew --prefix normlang)")")" = 0.23.2
+
+            git -C "$tap_dir" checkout --detach 9db9155a02e24689ca6570adc09bbd48f9f9475d
+            test "$(git -C "$tap_dir" rev-parse HEAD)" = 9db9155a02e24689ca6570adc09bbd48f9f9475d
+            test "$(brew info --json=v2 normlanguage/tap/normlang | jq -r '.formulae[0].urls.stable.url')" = https://github.com/normlanguage/Norm/releases/download/v0.24.0/norm-v0.24.0-macos-arm64.tar.gz
+            test "$(brew info --json=v2 normlanguage/tap/normlang | jq -r '.formulae[0].versions.stable')" = 0.24.0
+            brew fetch --force --verbose normlanguage/tap/normlang
+            new_cache="$(brew --cache normlanguage/tap/normlang)"
+            test -f "$new_cache"
+            printf '%s  %s\n' f14c86c9248b816a22eab3c6dd98c2d768589c82685fc8adcaad75fa70841622 "$new_cache" | shasum -a 256 -c -
+            brew upgrade --verbose normlanguage/tap/normlang
+            test "$(norm --version)" = 'norm 0.24.0'
+            test "$(cd "$project" && norm run hello.norm)" = 'Hello from Norm'
+            brew test normlanguage/tap/normlang
+            test "$(basename "$(realpath "$(brew --prefix normlang)")")" = 0.24.0
+
+            brew uninstall --force normlang
+            test ! -e "$(brew --prefix)/bin/norm"
+            test ! -d "$(brew --cellar)/normlang"
+            test "$(shasum -a 256 "$project/hello.norm" | awk '{print $1}')" = "$project_hash"
+            printf 'user_project_sha256=%s\n' "$project_hash"
+          } 2>&1 | tee validation-evidence/macos-upgrade.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-upgrade-evidence
+          path: validation-evidence
+          if-no-files-found: warn
