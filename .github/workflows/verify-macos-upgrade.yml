@@ -11,7 +11,6 @@ jobs:
   upgrade:
     runs-on: macos-15
     env:
-      HOMEBREW_CACHE: ${{ runner.temp }}/norm-homebrew-cache
       HOMEBREW_NO_AUTO_UPDATE: '1'
       HOMEBREW_NO_INSTALL_FROM_API: '1'
       HOMEBREW_NO_ANALYTICS: '1'
@@ -23,6 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export HOMEBREW_CACHE="$RUNNER_TEMP/norm-homebrew-cache"
           mkdir -p validation-evidence "$HOMEBREW_CACHE"
           {
             test "$(uname -m)" = arm64
