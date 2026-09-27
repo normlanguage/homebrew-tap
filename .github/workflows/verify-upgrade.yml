@@ -1,0 +1,139 @@
+name: Verify Formula Upgrade
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Formula/normlang.rb
+  workflow_dispatch:
+    inputs:
+      old_formula_commit:
+        description: Full commit SHA of the installed Formula
+        required: true
+        type: string
+      new_formula_commit:
+        description: Full commit SHA of the upgrade Formula
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_FROM_API: '1'
+      HOMEBREW_NO_ANALYTICS: '1'
+      OLD_FORMULA_COMMIT: ${{ github.event_name == 'push' && github.event.before || inputs.old_formula_commit }}
+      NEW_FORMULA_COMMIT: ${{ github.event_name == 'push' && github.sha || inputs.new_formula_commit }}
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: oracle
+          java-version: 25.0.2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: Homebrew/actions/setup-homebrew@082c94ee19e776205cfa8e43802917d1425e2fe7
+        with:
+          stable: true
+      - name: Install, upgrade, and remove public Formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HOMEBREW_CACHE="$RUNNER_TEMP/norm-homebrew-cache"
+          mkdir -p validation-evidence "$HOMEBREW_CACHE"
+          {
+            [[ "$OLD_FORMULA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$NEW_FORMULA_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            test "$OLD_FORMULA_COMMIT" != "$NEW_FORMULA_COMMIT"
+            case "$RUNNER_OS" in
+              macOS)
+                test "$(uname -m)" = arm64
+                platform=macos-arm64
+                ;;
+              Linux)
+                test "$(uname -m)" = x86_64
+                platform=linux-x64
+                ;;
+              *) exit 1 ;;
+            esac
+            brew --version
+            brew tap normlanguage/tap
+            tap_dir="$(brew --repository normlanguage/tap)"
+            case "$(git -C "$tap_dir" remote get-url origin)" in
+              https://github.com/normlanguage/homebrew-tap|https://github.com/normlanguage/homebrew-tap.git) ;;
+              *) exit 1 ;;
+            esac
+            git -C "$tap_dir" fetch --no-tags origin "$OLD_FORMULA_COMMIT" "$NEW_FORMULA_COMMIT"
+            git -C "$tap_dir" cat-file -e "$OLD_FORMULA_COMMIT:Formula/normlang.rb"
+            git -C "$tap_dir" cat-file -e "$NEW_FORMULA_COMMIT:Formula/normlang.rb"
+
+            project="$RUNNER_TEMP/norm-user-project"
+            mkdir -p "$project"
+            printf 'Void main() { printLine("Hello from Norm") }\n' > "$project/hello.norm"
+            project_hash="$(shasum -a 256 "$project/hello.norm" | awk '{print $1}')"
+
+            git -C "$tap_dir" checkout --detach "$OLD_FORMULA_COMMIT"
+            test "$(git -C "$tap_dir" rev-parse HEAD)" = "$OLD_FORMULA_COMMIT"
+            old_info="$(brew info --json=v2 normlanguage/tap/normlang)"
+            old_version="$(jq -r '.formulae[0].versions.stable' <<< "$old_info")"
+            [[ "$old_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "$(jq -r '.formulae[0].urls.stable.url' <<< "$old_info")" = "https://github.com/normlanguage/Norm/releases/download/v$old_version/norm-v$old_version-$platform.tar.gz"
+            old_sha="$(jq -r '.formulae[0].urls.stable.checksum' <<< "$old_info")"
+            [[ "$old_sha" =~ ^[0-9a-f]{64}$ ]]
+            brew fetch --force --verbose normlanguage/tap/normlang
+            old_cache="$(brew --cache normlanguage/tap/normlang)"
+            printf '%s  %s\n' "$old_sha" "$old_cache" | shasum -a 256 -c -
+            brew install --verbose normlanguage/tap/normlang
+            test "$(norm --version)" = "norm $old_version"
+            test "$(cd "$project" && norm run hello.norm)" = 'Hello from Norm'
+            brew test normlanguage/tap/normlang
+            test "$(basename "$(realpath "$(brew --prefix normlang)")")" = "$old_version"
+
+            git -C "$tap_dir" checkout --detach "$NEW_FORMULA_COMMIT"
+            test "$(git -C "$tap_dir" rev-parse HEAD)" = "$NEW_FORMULA_COMMIT"
+            new_info="$(brew info --json=v2 normlanguage/tap/normlang)"
+            new_version="$(jq -r '.formulae[0].versions.stable' <<< "$new_info")"
+            [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "$old_version" != "$new_version"
+            test "$(jq -r '.formulae[0].urls.stable.url' <<< "$new_info")" = "https://github.com/normlanguage/Norm/releases/download/v$new_version/norm-v$new_version-$platform.tar.gz"
+            new_sha="$(jq -r '.formulae[0].urls.stable.checksum' <<< "$new_info")"
+            [[ "$new_sha" =~ ^[0-9a-f]{64}$ ]]
+            brew fetch --force --verbose normlanguage/tap/normlang
+            new_cache="$(brew --cache normlanguage/tap/normlang)"
+            printf '%s  %s\n' "$new_sha" "$new_cache" | shasum -a 256 -c -
+            brew upgrade --verbose normlanguage/tap/normlang
+            test "$(norm --version)" = "norm $new_version"
+            test "$(cd "$project" && norm run hello.norm)" = 'Hello from Norm'
+            brew test normlanguage/tap/normlang
+            test "$(basename "$(realpath "$(brew --prefix normlang)")")" = "$new_version"
+            source_tree="$RUNNER_TEMP/norm-release-source"
+            git clone --depth 1 --branch "v$new_version" https://github.com/normlanguage/Norm.git "$source_tree"
+            installed_cli="$(command -v norm)"
+            node "$source_tree/cli/compiler/scripts/verify-cli.mjs" "$installed_cli" "$new_version"
+            node "$source_tree/cli/compiler/scripts/verify-lsp.mjs" "$source_tree" "$source_tree/build/reports/lsp" "$installed_cli"
+
+            brew uninstall --force normlang
+            test ! -e "$(brew --prefix)/bin/norm"
+            test ! -d "$(brew --cellar)/normlang"
+            test "$(shasum -a 256 "$project/hello.norm" | awk '{print $1}')" = "$project_hash"
+            printf 'upgrade=%s -> %s\n' "$old_version" "$new_version"
+            printf 'user_project_sha256=%s\n' "$project_hash"
+          } 2>&1 | tee validation-evidence/upgrade.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formula-upgrade-${{ matrix.os }}
+          path: |
+            validation-evidence
+            ${{ runner.temp }}/norm-release-source/build/reports/native-size
+            ${{ runner.temp }}/norm-release-source/build/reports/lsp
+          if-no-files-found: warn
