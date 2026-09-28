@@ -1,22 +1,22 @@
 class Normlang < Formula
   desc "Statically typed programming language and toolchain"
   homepage "https://github.com/normlanguage/Norm"
-  version "0.25.3"
+  version "0.25.4"
   license "MPL-2.0"
 
   on_macos do
     depends_on arch: :arm64
     on_arm do
-      url "https://github.com/normlanguage/Norm/releases/download/v0.25.3/norm-v0.25.3-macos-arm64.tar.gz"
-      sha256 "d8a62670355cef0ad1911c86e16504aa0d42a72aa9ea805229ff56b102c2ed62"
+      url "https://github.com/normlanguage/Norm/releases/download/v0.25.4/norm-v0.25.4-macos-arm64.tar.gz"
+      sha256 "2907a91ef2c20db85eaebe60df1bb6c311b6586541c867c3e1acabcee3a5ee01"
     end
   end
 
   on_linux do
     depends_on arch: :x86_64
     on_intel do
-      url "https://github.com/normlanguage/Norm/releases/download/v0.25.3/norm-v0.25.3-linux-x64.tar.gz"
-      sha256 "2765043908528b55fe0ff08feee642b1cf18a6dc663f66ffd040d83d8b2a28df"
+      url "https://github.com/normlanguage/Norm/releases/download/v0.25.4/norm-v0.25.4-linux-x64.tar.gz"
+      sha256 "501be29f34f1bc152ed4340e7c23437e9353f9a7e9f876f4f1c57f0e4adb197a"
     end
   end
 
